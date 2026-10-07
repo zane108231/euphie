@@ -1,0 +1,97 @@
+const { getGuildData, deleteGuildData } = require("../utils/playerStore");
+const { createChatPlayIdleContainer } = require("../utils/components");
+const { MessageFlags } = require("discord.js");
+
+module.exports = {
+    name: "voiceStateUpdate",
+    async execute(client, oldState, newState) {
+        // Check if the bot was disconnected from a voice channel
+        if (oldState.id === client.user.id && !newState.channelId) {
+            const guildData = getGuildData(oldState.guild.id);
+            if (guildData.recreatingPlayer) return;
+
+            const player = client.riffy.players.get(oldState.guild.id);
+            if (player) {
+                await resetChatPlayIfActive(client, oldState.guild.id);
+                try {
+                    player.destroy();
+                } catch {
+                    // NodeLink often errors destroying an already-dead player
+                }
+            }
+            return;
+        }
+
+        // Check if bot is alone in VC
+        if (oldState.channelId && oldState.channel) {
+            const botMember = oldState.guild.members.cache.get(client.user.id);
+            if (botMember?.voice?.channel) {
+                const members = botMember.voice.channel.members.filter(
+                    (m) => !m.user.bot
+                );
+                if (members.size === 0) {
+                    // Skip auto-disconnect if 24/7 mode is enabled
+                    const guildData = getGuildData(oldState.guild.id);
+                    if (guildData.twentyFourSeven) return;
+
+                    // Bot is alone, disconnect after 30 seconds
+                    setTimeout(async () => {
+                        const currentChannel = oldState.guild.members.cache
+                            .get(client.user.id)
+                            ?.voice?.channel;
+                        if (currentChannel) {
+                            const currentMembers = currentChannel.members.filter(
+                                (m) => !m.user.bot
+                            );
+                            if (currentMembers.size === 0) {
+                                // Re-check 24/7 in case it was toggled during the timeout
+                                const currentGuildData = getGuildData(oldState.guild.id);
+                                if (currentGuildData.twentyFourSeven) return;
+
+                                const player = client.riffy.players.get(
+                                    oldState.guild.id
+                                );
+                                if (player) {
+                                    await resetChatPlayIfActive(client, oldState.guild.id);
+                                    player.destroy();
+                                }
+                            }
+                        }
+                    }, 30000);
+                }
+            }
+        }
+    },
+};
+
+async function resetChatPlayIfActive(client, guildId) {
+    const guildData = getGuildData(guildId);
+    // Reset ChatPlay to idle
+    if (guildData.chatPlayChannelId && guildData.chatPlayMessageId) {
+        try {
+            const channel = client.channels.cache.get(guildData.chatPlayChannelId);
+            if (channel) {
+                const msg = await channel.messages.fetch(guildData.chatPlayMessageId);
+                await msg.edit({
+                    components: [createChatPlayIdleContainer()],
+                    attachments: [],
+                    flags: MessageFlags.IsComponentsV2,
+                });
+            }
+        } catch (err) {
+            // message may have been deleted
+        }
+    }
+    // Delete regular /play player message
+    else if (guildData.playerMessageId && guildData.playerChannelId) {
+        try {
+            const channel = client.channels.cache.get(guildData.playerChannelId);
+            if (channel) {
+                const msg = await channel.messages.fetch(guildData.playerMessageId);
+                await msg.delete();
+            }
+        } catch (err) {
+            // message already deleted
+        }
+    }
+}
