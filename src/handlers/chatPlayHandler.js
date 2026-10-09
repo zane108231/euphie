@@ -1,7 +1,7 @@
 const { MessageFlags } = require("discord.js");
 const { getGuildData } = require("../utils/playerStore");
 const { createChatPlayLoadingContainer } = require("../utils/components");
-const { isDuplicateTrack, startIfIdle, ensurePlayer } = require("../utils/playback");
+const { isDuplicateTrack, startIfIdle, ensurePlayer, getOccupiedVoiceChannel, buildAlreadyInUsePayload } = require("../utils/playback");
 
 async function sendChatPlayFeedback(channel, content, timeoutMs = 5000) {
     try {
@@ -54,7 +54,6 @@ async function handleChatPlayMessage(client, message) {
         console.error("[euphire ChatPlay] Failed to delete message:", err.message);
     }
 
-    // Check if the user is in a voice channel
     const voiceChannel = message.member?.voice?.channel;
     if (!voiceChannel) {
         try {
@@ -68,12 +67,26 @@ async function handleChatPlayMessage(client, message) {
         return true;
     }
 
+    const occupied = getOccupiedVoiceChannel(message.guild, client);
+    if (occupied && occupied.id !== voiceChannel.id) {
+        try {
+            const { containerPayload, embedPayload } = buildAlreadyInUsePayload(occupied);
+            await message.channel.send(containerPayload).catch(async () => {
+                await message.channel.send(embedPayload);
+            });
+        } catch {
+            // ignore
+        }
+        return true;
+    }
+
     try {
         let player = await ensurePlayer(client, {
             guildId: message.guild.id,
             voiceChannelId: voiceChannel.id,
             textChannelId: message.channel.id,
             volume: guildData.volume,
+            requesterId: message.author.id,
         });
 
         // Update ChatPlay message to show loading state (only for first song)
@@ -95,7 +108,8 @@ async function handleChatPlayMessage(client, message) {
 
         // Resolve the query
         const result = await client.riffy.resolve({
-            query: query,
+            query: query.trim(),
+            source: "ytsearch",
             requester: message.author,
         });
 

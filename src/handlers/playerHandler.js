@@ -1,14 +1,17 @@
-const { MessageFlags, AttachmentBuilder, ContainerBuilder, TextDisplayBuilder } = require("discord.js");
+const { MessageFlags, AttachmentBuilder, ContainerBuilder, TextDisplayBuilder, EmbedBuilder } = require("discord.js");
 const { getGuildData, clearUpdateInterval } = require("../utils/playerStore");
-const { createNowPlayingContainer, createChatPlayIdleContainer, createChatPlayNowPlayingContainer } = require("../utils/components");
+const { createNowPlayingContainer, createChatPlayIdleContainer, createChatPlayNowPlayingContainer, safeArtworkUrl } = require("../utils/components");
 const { generateMusicCard } = require("../utils/musicard");
 const { recordIncident } = require("../utils/incidents");
 const { scheduleStatusUpdate } = require("../services/statusMonitor");
-const { markPlayerIdle, reviveNodes } = require("../utils/playback");
+const { markPlayerIdle, reviveNodes, markNodeFailed } = require("../utils/playback");
+const { resetSessionPermissions } = require("../utils/permissions");
+const { getPrefix } = require("../utils/prefixStore");
 const config = require("../../config");
 
 const UPDATE_INTERVAL_MS = 15 * 1000; // 15 seconds
 const LAVALINK_RECONNECT_INTERVAL_MS = 30 * 60 * 1000;
+const NODE_RESTORE_DELAY_MS = 10 * 60 * 1000;
 let lavalinkReconnectTimer = null;
 
 function refreshLavalinkNodes(client) {
@@ -18,19 +21,12 @@ function refreshLavalinkNodes(client) {
         const node = client.riffy.nodeMap.get(configNode.name);
 
         if (!node) {
-            client.riffy.createNode(configNode);
-            console.log(`[euphire] Created missing Lavalink node "${configNode.name}".`);
+            reviveNodes(client.riffy);
             continue;
         }
 
-        if (node.connected) continue;
+        if (node.connected || node.reconnectAttempt || node.ws) continue;
 
-        if (node.reconnectAttempt) {
-            clearTimeout(node.reconnectAttempt);
-            node.reconnectAttempt = null;
-        }
-
-        node.reconnectAttempted = 1;
         node.connect();
         console.log(`[euphire] Reconnecting Lavalink node "${configNode.name}".`);
     }
@@ -40,7 +36,12 @@ function startLavalinkReconnectMonitor(client) {
     if (lavalinkReconnectTimer) clearInterval(lavalinkReconnectTimer);
 
     lavalinkReconnectTimer = setInterval(() => {
-        console.log("[euphire] Running scheduled Lavalink reconnect...");
+        const needsWork = config.nodes.some((cfg) => {
+            const node = client.riffy.nodeMap.get(cfg.name);
+            return !node || !node.connected;
+        });
+        if (!needsWork) return;
+        console.log("[euphire] A Lavalink node is down — reconnecting backups...");
         refreshLavalinkNodes(client);
     }, LAVALINK_RECONNECT_INTERVAL_MS);
 }
@@ -48,7 +49,57 @@ function startLavalinkReconnectMonitor(client) {
 /**
  * Helper: edit the existing player message or send a new one (never duplicates)
  */
+function isMissingPermissions(err) {
+    const code = err?.code;
+    const msg = String(err?.message || "");
+    return code === 50013 || msg.includes("Missing Permissions") || msg.includes("Missing Access");
+}
+
+async function sendQueueEmptyNotice(channel, guildId) {
+    if (!channel) return;
+    const prefix = getPrefix(guildId);
+    const container = new ContainerBuilder();
+    container.addTextDisplayComponents(
+        new TextDisplayBuilder().setContent(
+            "### 📭 There are no more tracks\n\n" +
+            "**Queue**\n" +
+            "-# The last song finished and nothing else is queued.\n\n" +
+            "**Status**\n" +
+            "-# Nothing is playing right now.\n\n" +
+            "**Play again**\n" +
+            `-# \`${prefix}play <song name>\``
+        )
+    );
+
+    try {
+        await channel.send({
+            components: [container],
+            flags: MessageFlags.IsComponentsV2,
+        });
+        return;
+    } catch {
+        // Components V2 may be blocked — fall back to a classic embed
+    }
+
+    try {
+        const { EmbedBuilder } = require("discord.js");
+        await channel.send({
+            embeds: [
+                new EmbedBuilder()
+                    .setColor(config.accentColor || 0x2b2d31)
+                    .setTitle("📭 There are no more tracks")
+                    .setDescription("The queue has ended. Nothing is playing right now.")
+                    .setFooter({ text: `Use ${prefix}play to start another song` }),
+            ],
+        });
+    } catch {
+        // Channel has no send permission
+    }
+}
+
 async function editOrSendPlayerMessage(client, guildData, channelId, container, files) {
+    if (guildData.cannotSendPlayer) return;
+
     const channel = client.channels.cache.get(channelId);
     if (!channel) {
         // Channel no longer exists; clear stale IDs
@@ -58,7 +109,7 @@ async function editOrSendPlayerMessage(client, guildData, channelId, container, 
         return;
     }
 
-    const messageId = guildData.chatPlayMessageId || guildData.playerMessageId;
+    const messageId = guildData.playerMessageId;
 
     if (messageId) {
         try {
@@ -70,6 +121,11 @@ async function editOrSendPlayerMessage(client, guildData, channelId, container, 
             });
             return;
         } catch (err) {
+            if (isMissingPermissions(err)) {
+                guildData.cannotSendPlayer = true;
+                clearUpdateInterval(guildData);
+                return;
+            }
             // Message or channel no longer exists — clear stale IDs and send a new one
             guildData.chatPlayMessageId = null;
             guildData.playerMessageId = null;
@@ -86,14 +142,137 @@ async function editOrSendPlayerMessage(client, guildData, channelId, container, 
             flags: MessageFlags.IsComponentsV2,
         });
 
-        if (guildData.chatPlayChannelId) {
-            guildData.chatPlayMessageId = newMsg.id;
-        } else {
-            guildData.playerMessageId = newMsg.id;
-            guildData.playerChannelId = channel.id;
-        }
+        guildData.playerMessageId = newMsg.id;
+        guildData.playerChannelId = channel.id;
     } catch (sendErr) {
+        if (isMissingPermissions(sendErr)) {
+            guildData.cannotSendPlayer = true;
+            clearUpdateInterval(guildData);
+            return;
+        }
         console.error("[euphire] Failed to send player message:", sendErr.message);
+    }
+}
+
+function canSendToChannel(channel) {
+    return Boolean(channel && typeof channel.send === "function");
+}
+
+function resolveNowPlayingChannel(client, player, guildData) {
+    const ids = [
+        player?.textChannel,
+        guildData?.playerChannelId,
+        player?.voiceChannel,
+    ].filter(Boolean);
+
+    const seen = new Set();
+    for (const id of ids) {
+        if (seen.has(id)) continue;
+        seen.add(id);
+        const channel = client.channels.cache.get(id);
+        if (canSendToChannel(channel)) return channel;
+    }
+    return null;
+}
+
+function requesterMention(track) {
+    const requester = track?.info?.requester;
+    const id = requester?.id || (typeof requester === "string" ? requester : null);
+    return id ? `<@${id}>` : "Unknown";
+}
+
+function buildNowPlayingEmbedPayload(track, files) {
+    const title = (track?.info?.title || "Unknown").substring(0, 256);
+    const author = track?.info?.author || "Unknown Artist";
+    const embed = new EmbedBuilder()
+        .setColor(config.accentColor || 0x2b2d31)
+        .setTitle(`Now Playing — ${title}`)
+        .setDescription(`By ${author}\nRequested by ${requesterMention(track)}`)
+        .setThumbnail(safeArtworkUrl(track));
+    if (files?.length) {
+        embed.setImage("attachment://musicard.png");
+    }
+    return { embeds: [embed], files: files || [] };
+}
+
+async function sendNowPlayingPayload(channel, container, files, track) {
+    try {
+        return await channel.send({
+            components: [container],
+            files: files,
+            flags: MessageFlags.IsComponentsV2,
+        });
+    } catch (err) {
+        console.error("[euphire] Now playing (components) failed:", err.message);
+    }
+
+    try {
+        return await channel.send(buildNowPlayingEmbedPayload(track, files));
+    } catch (err) {
+        console.error("[euphire] Now playing (embed) failed:", err.message);
+    }
+
+    try {
+        const title = track?.info?.title || "Unknown";
+        const author = track?.info?.author || "Unknown Artist";
+        return await channel.send({
+            content: `**Now Playing — ${title}**\nBy ${author}\nRequested by ${requesterMention(track)}`,
+            files: files?.length ? files : undefined,
+        });
+    } catch (err) {
+        console.error("[euphire] Now playing (text) failed:", err.message);
+        return null;
+    }
+}
+
+/**
+ * Always post a new now-playing card in the play/skip text channel
+ * (or the voice channel chat) so people can see the current track.
+ */
+async function announceNowPlaying(client, player, track, guildData) {
+    const musicardBuffer = await generateMusicCard(track, player, guildData);
+    const files = [];
+    if (musicardBuffer) {
+        files.push(new AttachmentBuilder(musicardBuffer, { name: "musicard.png" }));
+    }
+
+    const container = createNowPlayingContainer(track, player, guildData, musicardBuffer);
+    const channel = resolveNowPlayingChannel(client, player, guildData);
+
+    if (!channel) {
+        console.warn(`[euphire] No channel available to send now playing for guild ${player.guildId}`);
+        return;
+    }
+
+    const newMsg = await sendNowPlayingPayload(channel, container, files, track);
+    if (!newMsg) return;
+
+    const oldId = guildData.playerMessageId;
+    const oldChannelId = guildData.playerChannelId;
+    guildData.playerMessageId = newMsg.id;
+    guildData.playerChannelId = channel.id;
+    guildData.cannotSendPlayer = false;
+
+    if (oldId && oldId !== newMsg.id) {
+        const oldChannel = client.channels.cache.get(oldChannelId) || channel;
+        oldChannel?.messages?.fetch(oldId).then((msg) => msg.delete()).catch(() => {});
+    }
+
+    if (guildData.chatPlayChannelId && guildData.chatPlayMessageId) {
+        try {
+            const chatChannel = client.channels.cache.get(guildData.chatPlayChannelId);
+            const chatContainer = createChatPlayNowPlayingContainer(track, player, guildData, musicardBuffer);
+            if (chatChannel && guildData.chatPlayMessageId !== newMsg.id) {
+                const chatMsg = await chatChannel.messages.fetch(guildData.chatPlayMessageId);
+                await chatMsg.edit({
+                    components: [chatContainer],
+                    files: files,
+                    flags: MessageFlags.IsComponentsV2,
+                });
+            }
+        } catch {
+            // ChatPlay panel is optional; the public now-playing already posted
+        }
     }
 }
 
@@ -106,19 +285,18 @@ async function refreshPlayerMessage(client, guildId) {
         if (!player || !player.current) return;
 
         const guildData = getGuildData(guildId);
+        if (guildData.cannotSendPlayer) return;
         const track = player.current;
 
         const musicardBuffer = await generateMusicCard(track, player, guildData);
-        const container = guildData.chatPlayChannelId
-            ? createChatPlayNowPlayingContainer(track, player, guildData, musicardBuffer)
-            : createNowPlayingContainer(track, player, guildData, musicardBuffer);
+        const container = createNowPlayingContainer(track, player, guildData, musicardBuffer);
 
         const files = [];
         if (musicardBuffer) {
             files.push(new AttachmentBuilder(musicardBuffer, { name: "musicard.png" }));
         }
 
-        const channelId = guildData.chatPlayChannelId || guildData.playerChannelId || player.textChannel;
+        const channelId = guildData.playerChannelId || player.textChannel;
         await editOrSendPlayerMessage(client, guildData, channelId, container, files);
     } catch (error) {
         console.error("[euphire] Auto-update error:", error);
@@ -159,13 +337,14 @@ function setupPlayerHandler(client) {
         recordIncident("Lavalink", `Node error: ${error.message.substring(0, 50)}`);
         scheduleStatusUpdate(client, true);
         if (String(error?.message || "").includes("after") && String(error.message).includes("attempts")) {
-            setTimeout(() => reviveNodes(client.riffy), 1500);
+            markNodeFailed(node.name);
         }
     });
 
     client.riffy.on("nodeDestroy", (node) => {
-        console.warn(`[euphire] Node "${node.name}" was removed from the pool. Restoring...`);
-        setTimeout(() => reviveNodes(client.riffy), 1500);
+        markNodeFailed(node.name);
+        console.warn(`[euphire] Node "${node.name}" was removed. Will retry that backup later, not during playback.`);
+        setTimeout(() => reviveNodes(client.riffy), NODE_RESTORE_DELAY_MS);
     });
 
     // --- Node Disconnect ---
@@ -187,6 +366,7 @@ function setupPlayerHandler(client) {
     client.riffy.on("trackStart", async (player, track) => {
         try {
             const guildData = getGuildData(player.guildId);
+            guildData.cannotSendPlayer = false;
 
             // Save the previous track for the "Previous" button
             if (player.previous) {
@@ -206,23 +386,7 @@ function setupPlayerHandler(client) {
             // Start voice channel monitoring
             startVoiceChannelMonitoring(client, player.guildId);
 
-            // Generate musicard image
-            const musicardBuffer = await generateMusicCard(track, player, guildData);
-
-            // Build the container - use ChatPlay version if in ChatPlay channel
-            const container = guildData.chatPlayChannelId
-                ? createChatPlayNowPlayingContainer(track, player, guildData, musicardBuffer)
-                : createNowPlayingContainer(track, player, guildData, musicardBuffer);
-
-            // Prepare files
-            const files = [];
-            if (musicardBuffer) {
-                files.push(new AttachmentBuilder(musicardBuffer, { name: "musicard.png" }));
-            }
-
-            // Get the channel
-            const channelId = guildData.chatPlayChannelId || guildData.playerChannelId || player.textChannel;
-            await editOrSendPlayerMessage(client, guildData, channelId, container, files);
+            await announceNowPlaying(client, player, track, guildData);
 
             // Start 15-second auto-update interval
             startUpdateInterval(client, player.guildId);
@@ -284,9 +448,9 @@ function setupPlayerHandler(client) {
                     }
                 }
             } else if (guildData.playerMessageId && guildData.playerChannelId) {
-                // For regular /play: delete the old message
+                // For regular play: delete the old now-playing card, then announce idle
+                const channel = client.channels.cache.get(guildData.playerChannelId);
                 try {
-                    const channel = client.channels.cache.get(guildData.playerChannelId);
                     if (channel) {
                         const msg = await channel.messages.fetch(guildData.playerMessageId);
                         await msg.delete();
@@ -294,8 +458,13 @@ function setupPlayerHandler(client) {
                 } catch (err) {
                     // message already deleted
                 }
+                await sendQueueEmptyNotice(channel, player.guildId);
                 guildData.playerMessageId = null;
                 guildData.playerChannelId = null;
+            } else {
+                const channelId = player.textChannel;
+                const channel = channelId ? client.channels.cache.get(channelId) : null;
+                await sendQueueEmptyNotice(channel, player.guildId);
             }
 
             // If NOT 24/7, disconnect after a delay
@@ -307,7 +476,7 @@ function setupPlayerHandler(client) {
                     try {
                         const currentPlayer = client.riffy.players.get(player.guildId);
                         // Check if player exists and is not actively playing
-                        if (currentPlayer && !currentPlayer.playing && !currentPlayer.paused && !currentPlayer.current) {
+                        if (currentPlayer && !currentPlayer.playing && !currentPlayer.paused) {
                             currentPlayer.destroy();
                         }
                     } catch (err) {
@@ -369,6 +538,7 @@ function setupPlayerHandler(client) {
         guildData.previousTracks = [];
         if (guildData.idleTimeout) clearTimeout(guildData.idleTimeout);
         guildData.idleTimeout = null;
+        resetSessionPermissions(player.guildId);
     });
 
     // --- Track Error / Stuck ---

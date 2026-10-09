@@ -1,6 +1,8 @@
 const { SlashCommandBuilder, MessageFlags, ContainerBuilder, TextDisplayBuilder } = require("discord.js");
 const { getGuildData } = require("../utils/playerStore");
 const { setGuildSetting, getGuildSettings } = require("../utils/database");
+const { claimDjIfNeeded } = require("../utils/permissions");
+const { getOccupiedVoiceChannel, replyAlreadyInUse } = require("../utils/playback");
 
 module.exports = {
     data: new SlashCommandBuilder()
@@ -24,6 +26,11 @@ module.exports = {
         setGuildSetting(guildId, "twentyFourSeven", newState);
 
         if (newState) {
+            const occupied = getOccupiedVoiceChannel(interaction.guild, client);
+            if (occupied && occupied.id !== interaction.member.voice.channel.id) {
+                return replyAlreadyInUse(interaction, occupied);
+            }
+
             let player = client.riffy.players.get(guildId);
             if (!player) {
                 player = client.riffy.createConnection({
@@ -32,6 +39,7 @@ module.exports = {
                     textChannel: interaction.channel.id,
                     deaf: true,
                 });
+                claimDjIfNeeded(guildId, interaction.user.id);
             }
         }
 

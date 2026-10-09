@@ -1,4 +1,5 @@
 const { SlashCommandBuilder, MessageFlags, ContainerBuilder, TextDisplayBuilder } = require("discord.js");
+const { requireMusicAction } = require("../utils/permissions");
 
 const FILTER_PRESETS = {
     bassboost: { name: "Bass Boost", emoji: "🔊", apply: (p) => p.filters.setBassboost(true, { value: 4 }) },
@@ -35,12 +36,10 @@ module.exports = {
         ),
 
     async execute(interaction, client) {
-        const player = client.riffy.players.get(interaction.guild.id);
-        if (!player || !player.current) {
+        const player = await requireMusicAction(interaction, client, "filter");
+        if (!player) return;
+        if (!player.current) {
             return interaction.reply({ content: "❌ Nothing is playing right now.", flags: MessageFlags.Ephemeral });
-        }
-        if (!interaction.member.voice?.channel) {
-            return interaction.reply({ content: "❌ You need to be in a voice channel!", flags: MessageFlags.Ephemeral });
         }
 
         const preset = (interaction.options.getString("preset") || "").toLowerCase();

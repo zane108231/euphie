@@ -1,4 +1,5 @@
 const { SlashCommandBuilder, MessageFlags, ContainerBuilder, TextDisplayBuilder } = require("discord.js");
+const { requireMusicAction } = require("../utils/permissions");
 
 module.exports = {
     data: new SlashCommandBuilder()
@@ -20,20 +21,8 @@ module.exports = {
         ),
 
     async execute(interaction, client) {
-        const player = client.riffy.players.get(interaction.guild.id);
-        if (!player) {
-            return interaction.reply({
-                content: "❌ No active player.",
-                flags: MessageFlags.Ephemeral,
-            });
-        }
-
-        if (!interaction.member.voice?.channel) {
-            return interaction.reply({
-                content: "❌ You need to be in a voice channel!",
-                flags: MessageFlags.Ephemeral,
-            });
-        }
+        const player = await requireMusicAction(interaction, client, "move");
+        if (!player) return;
 
         const from = interaction.options.getInteger("from");
         const to = interaction.options.getInteger("to");

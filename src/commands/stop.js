@@ -1,6 +1,8 @@
 const { SlashCommandBuilder, MessageFlags, ContainerBuilder, TextDisplayBuilder } = require("discord.js");
 const { getGuildData, clearUpdateInterval } = require("../utils/playerStore");
 const { createChatPlayIdleContainer } = require("../utils/components");
+const { requireMusicAction } = require("../utils/permissions");
+const { getMusicDenial } = require("../utils/permissions");
 
 module.exports = {
     data: new SlashCommandBuilder()
@@ -8,19 +10,12 @@ module.exports = {
         .setDescription("Stop playback, clear queue, and disconnect"),
 
     async execute(interaction, client) {
-        const player = client.riffy.players.get(interaction.guild.id);
-        if (!player) {
-            return interaction.reply({
-                content: "❌ No active player.",
-                flags: MessageFlags.Ephemeral,
-            });
-        }
+        const player = await requireMusicAction(interaction, client, "stop");
+        if (!player) return;
 
-        if (!interaction.member.voice?.channel) {
-            return interaction.reply({
-                content: "❌ You need to be in a voice channel!",
-                flags: MessageFlags.Ephemeral,
-            });
+        const denial = getMusicDenial(interaction.member, player, "stop");
+        if (denial) {
+            return interaction.reply({ content: denial, flags: MessageFlags.Ephemeral });
         }
 
         // Clean up guild state

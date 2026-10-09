@@ -9,6 +9,7 @@ const path = require("path");
 const config = require("../config");
 const { loadCommands } = require("./handlers/commandHandler");
 const { setupPlayerHandler } = require("./handlers/playerHandler");
+const { patchRiffyResolve } = require("./utils/search");
 
 // ============================================================
 // Render Health Check Web Server
@@ -53,8 +54,12 @@ client.riffy = new Riffy(client, config.nodes, {
             guild.shard.send(payload);
         }
     },
+<<<<<<< HEAD
 
     defaultSearchPlatform: config.defaultSearchPlatform || "ytmsearch",
+=======
+    defaultSearchPlatform: config.defaultSearchPlatform || "ytsearch",
+>>>>>>> 11968c0 (latest with new feautures)
     restVersion: config.restVersion || "v4",
 
     bypassChecks: {
@@ -62,10 +67,16 @@ client.riffy = new Riffy(client, config.nodes, {
     },
 });
 
+<<<<<<< HEAD
 // ============================================================
 // Load Commands
 // ============================================================
 
+=======
+patchRiffyResolve(client.riffy);
+
+// --- Load Commands ---
+>>>>>>> 11968c0 (latest with new feautures)
 loadCommands(client);
 
 // ============================================================
@@ -102,6 +113,7 @@ if (fs.existsSync(eventsPath)) {
 
 setupPlayerHandler(client);
 
+<<<<<<< HEAD
 // ============================================================
 // Global Error Handlers
 // ============================================================
@@ -129,6 +141,40 @@ process.on("unhandledRejection", (reason, promise) => {
         "[euphire] Unhandled Rejection:",
         reason
     );
+=======
+// --- Global Error Handlers (prevent crashes) ---
+try {
+    const { Player } = require("riffy/build/structures/Player");
+    const originalTrackEnd = Player.prototype.trackEnd;
+    Player.prototype.trackEnd = function trackEndSafe(player, track, payload) {
+        if (!track || !track.info) {
+            this.playing = false;
+            if (player?.queue?.length) {
+                try {
+                    return player.play();
+                } catch {
+                    return;
+                }
+            }
+            return this.riffy.emit("queueEnd", player);
+        }
+        return originalTrackEnd.call(this, player, track, payload);
+    };
+} catch (err) {
+    console.warn("[euphire] Could not patch Riffy trackEnd:", err.message);
+}
+
+process.on("unhandledRejection", (reason) => {
+    const message = reason && reason.message ? reason.message : String(reason || "");
+    if (message.includes("Queue is empty")) return;
+    if (message.includes("Making Node Request")) {
+        console.warn("[euphire] Lavalink request failed:", message);
+        return;
+    }
+    if (message.includes("Missing 'endpoint' property")) return;
+    if (message.includes("Cannot read properties of null (reading 'info')")) return;
+    console.error("[euphire] Unhandled Rejection:", reason);
+>>>>>>> 11968c0 (latest with new feautures)
 });
 
 process.on("uncaughtException", (error) => {
@@ -168,9 +214,19 @@ client.on("raw", (d) => {
         ].includes(d.t)
     ) {
         return;
+<<<<<<< HEAD
     }
 
     client.riffy.updateVoiceState(d);
+=======
+    if (d.t === GatewayDispatchEvents.VoiceServerUpdate && !d.d?.endpoint) return;
+    try {
+        client.riffy.updateVoiceState(d);
+    } catch (err) {
+        if (String(err?.message || "").includes("endpoint")) return;
+        console.error("[euphire] Voice state update failed:", err.message);
+    }
+>>>>>>> 11968c0 (latest with new feautures)
 });
 
 // ============================================================

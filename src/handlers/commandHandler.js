@@ -2,6 +2,7 @@ const fs = require("fs");
 const path = require("path");
 const { Collection } = require("discord.js");
 const { PREFIX, createPrefixInteraction } = require("../utils/prefix");
+const { getPrefix } = require("../utils/prefixStore");
 
 /**
  * Load all commands from the commands directory
@@ -52,9 +53,10 @@ function resolveCommand(client, name) {
  */
 async function handlePrefixCommand(client, message) {
     if (!message.guild || message.author.bot) return false;
-    if (!message.content.startsWith(PREFIX)) return false;
+    const prefix = getPrefix(message.guild.id);
+    if (!message.content.startsWith(prefix)) return false;
 
-    const without = message.content.slice(PREFIX.length).trim();
+    const without = message.content.slice(prefix.length).trim();
     if (!without) return true;
 
     const [rawName, ...args] = without.split(/\s+/);
@@ -62,7 +64,7 @@ async function handlePrefixCommand(client, message) {
     if (!command) {
         try {
             await message.channel.send({
-                content: `❌ Unknown command \`${PREFIX}${rawName}\`. Try \`${PREFIX}help\`.`,
+                content: `❌ Unknown command \`${prefix}${rawName}\`. Try \`${prefix}help\`.`,
             });
         } catch {
             // ignore

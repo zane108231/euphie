@@ -22,6 +22,10 @@ class GuildData {
         this.voiceStateTimeout = null; // voice channel monitoring timeout
         this.wasPaused = false; // track if music was paused due to empty channel
         this.recreatingPlayer = false; // skip disconnect cleanup while replacing a stale node player
+        this.cannotSendPlayer = false;
+        this.djOwnerId = null;
+        this.musicAllowEveryone = new Set();
+        this.musicAllows = {};
     }
 }
 

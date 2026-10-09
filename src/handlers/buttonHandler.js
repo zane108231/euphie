@@ -3,7 +3,7 @@ const { getGuildData, clearUpdateInterval } = require("../utils/playerStore");
 const { createNowPlayingContainer, createChatPlayNowPlayingContainer, createQueueContainer, createChatPlayIdleContainer } = require("../utils/components");
 const { generateMusicCard } = require("../utils/musicard");
 const { addNodeDetails } = require("../utils/nodeDetails");
-const { canControlMusic, VOICE_CHANNEL_DENIAL } = require("../utils/permissions");
+const { canControlMusic, canUseMusicAction, denyMusicMessage, VOICE_CHANNEL_DENIAL } = require("../utils/permissions");
 const { startIfIdle, setVolumeSafe } = require("../utils/playback");
 const config = require("../../config");
 
@@ -17,7 +17,7 @@ async function handleButtonInteraction(client, interaction) {
     }
 
     const { formatCmd } = require("../utils/prefix");
-    const getCmd = formatCmd;
+    const getCmd = (name, subcommand = null) => formatCmd(name, subcommand, interaction.guild.id);
     const guildId = interaction.guild.id;
     let player = client.riffy.players.get(guildId);
     const guildData = getGuildData(guildId);
@@ -246,6 +246,7 @@ async function handleButtonInteraction(client, interaction) {
 
         const selectedPage = interaction.values[0];
         const { buildHelpPage } = require("../commands/help");
+        client._helpGuildId = interaction.guild.id;
         const container = await buildHelpPage(client, selectedPage);
 
         try {
@@ -371,6 +372,23 @@ async function handleButtonInteraction(client, interaction) {
         return interaction.reply({ content: VOICE_CHANNEL_DENIAL, flags: MessageFlags.Ephemeral });
     }
 
+    const buttonActionMap = {
+        skip: "skip",
+        previous: "skip",
+        stop: "stop",
+        shuffle: "shuffle",
+        loop: "loop",
+        vol_up: "volume",
+        vol_down: "volume",
+    };
+    const requiredAction = buttonActionMap[customId];
+    if (requiredAction && !canUseMusicAction(interaction.member, player, requiredAction)) {
+        return interaction.reply({
+            content: denyMusicMessage(interaction.guild.id, requiredAction),
+            flags: MessageFlags.Ephemeral,
+        });
+    }
+
     // Defer immediately to avoid 3s timeout
     await interaction.deferUpdate();
 
@@ -388,6 +406,8 @@ async function handleButtonInteraction(client, interaction) {
         }
 
         case "skip": {
+            player.textChannel = interaction.channel.id;
+            guildData.playerChannelId = interaction.channel.id;
             player.stop();
             break;
         }

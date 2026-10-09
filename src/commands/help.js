@@ -95,7 +95,8 @@ async function buildHelpPage(client, page = "home") {
     container.addSeparatorComponents(new SeparatorBuilder().setDivider(true));
 
     const { formatCmd } = require("../utils/prefix");
-    const getCmd = formatCmd;
+    const guildId = client._helpGuildId || null;
+    const getCmd = (name, subcommand = null) => formatCmd(name, subcommand, guildId);
 
     // --- Page Content ---
     switch (page) {
@@ -179,7 +180,7 @@ function addMusicPage(container, getCmd) {
     container.addTextDisplayComponents(
         new TextDisplayBuilder().setContent(
             "### 🎶 Command Browser\n" +
-            "-# 17 commands available"
+            "-# 19 commands available"
         )
     );
 
@@ -203,7 +204,9 @@ function addMusicPage(container, getCmd) {
             `**14.** ${getCmd("chatplay", "enable")} — Resume listening for song requests\n\n` +
             `**15.** ${getCmd("chatplay", "disable")} — Pause listening (keeps message)\n\n` +
             `**16.** ${getCmd("chatplay", "setup")} — Send the persistent player message\n\n` +
-            `**17.** ${getCmd("about")} — Learn more about euphire`
+            `**17.** ${getCmd("about")} — Learn more about euphire\n\n` +
+            `**18.** ${getCmd("prefix")} — View or change this server's prefix (admins)\n\n` +
+            `**19.** ${getCmd("permission")} — DJ grants skip/stop/volume and more`
         )
     );
 }
@@ -380,7 +383,7 @@ function addSupportPage(container, getCmd) {
 
     const supportButton = new ButtonBuilder()
         .setLabel("Join Support Server")
-        .setURL("https://discord.gg/MRjEUhDCpZ")
+        .setURL("https://dsc.gg/duxceriao")
         .setStyle(ButtonStyle.Link);
 
     container.addActionRowComponents(new ActionRowBuilder().addComponents(supportButton));
@@ -419,7 +422,7 @@ function addSupportPage(container, getCmd) {
 
     container.addTextDisplayComponents(
         new TextDisplayBuilder().setContent(
-            "-# euphire is [open source](https://github.com/codebymitch/euphire)."
+            "-# euphire is a custom music bot made by [duxceriao](https://dsc.gg/duxceriao)"
         )
     );
 }
@@ -430,6 +433,7 @@ module.exports = {
         .setDescription("Show all euphire commands and features"),
 
     async execute(interaction, client) {
+        client._helpGuildId = interaction.guild.id;
         const container = await buildHelpPage(client, "home");
 
         await interaction.reply({

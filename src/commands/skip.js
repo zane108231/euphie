@@ -1,5 +1,8 @@
 const { SlashCommandBuilder, MessageFlags, ContainerBuilder, TextDisplayBuilder } = require("discord.js");
-const { startIfIdle } = require("../utils/playback");
+const { startIfIdle, setAnnounceChannel } = require("../utils/playback");
+const { getGuildData } = require("../utils/playerStore");
+const { requireMusicAction } = require("../utils/permissions");
+const { getMusicDenial } = require("../utils/permissions");
 
 module.exports = {
     aliases: ["s"],
@@ -8,22 +11,16 @@ module.exports = {
         .setDescription("Skip the current track"),
 
     async execute(interaction, client) {
-        const player = client.riffy.players.get(interaction.guild.id);
-        if (!player) {
-            return interaction.reply({
-                content: "❌ No active player.",
-                flags: MessageFlags.Ephemeral,
-            });
-        }
+        const player = await requireMusicAction(interaction, client, "skip");
+        if (!player) return;
 
-        if (!interaction.member.voice?.channel) {
-            return interaction.reply({
-                content: "❌ You need to be in a voice channel!",
-                flags: MessageFlags.Ephemeral,
-            });
+        const denial = getMusicDenial(interaction.member, player, "skip");
+        if (denial) {
+            return interaction.reply({ content: denial, flags: MessageFlags.Ephemeral });
         }
 
         const skippedTitle = player.current?.info?.title || "Unknown";
+        setAnnounceChannel(player, getGuildData(interaction.guild.id), interaction.channel.id);
 
         if (player.playing || player.paused) {
             player.stop();

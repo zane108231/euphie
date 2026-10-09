@@ -1,6 +1,6 @@
 const { SlashCommandBuilder, MessageFlags, ContainerBuilder, TextDisplayBuilder, SeparatorBuilder } = require("discord.js");
 const { getGuildData } = require("../utils/playerStore");
-const { isDuplicateTrack, startIfIdle, ensurePlayer } = require("../utils/playback");
+const { isDuplicateTrack, startIfIdle, ensurePlayer, setAnnounceChannel, getOccupiedVoiceChannel, replyAlreadyInUse } = require("../utils/playback");
 
 module.exports = {
     data: new SlashCommandBuilder()
@@ -33,6 +33,11 @@ module.exports = {
             });
         }
 
+        const occupied = getOccupiedVoiceChannel(interaction.guild, client);
+        if (occupied && occupied.id !== member.voice.channel.id) {
+            return replyAlreadyInUse(interaction, occupied);
+        }
+
         await interaction.deferReply({ flags: MessageFlags.Ephemeral });
 
         const guildData = getGuildData(interaction.guild.id);
@@ -44,8 +49,10 @@ module.exports = {
                 voiceChannelId: member.voice.channel.id,
                 textChannelId: interaction.channel.id,
                 volume: guildData.volume,
+                requesterId: interaction.user.id,
             });
-            guildData.playerChannelId = interaction.channel.id;
+            guildData.cannotSendPlayer = false;
+            setAnnounceChannel(player, guildData, interaction.channel.id);
         } catch (err) {
             console.error("[euphire] Failed to create player:", err);
             return interaction.editReply({ content: "❌ Could not join your voice channel. Try again in a moment." });
@@ -53,7 +60,8 @@ module.exports = {
 
         try {
             const result = await client.riffy.resolve({
-                query: query,
+                query: query.trim(),
+                source: "ytsearch",
                 requester: interaction.user,
             });
 

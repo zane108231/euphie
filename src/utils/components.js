@@ -24,6 +24,16 @@ function formatDuration(ms) {
     return `${minutes}:${seconds.toString().padStart(2, "0")}`;
 }
 
+const FALLBACK_ART = "https://i.imgur.com/4YFmJMi.png";
+
+function safeArtworkUrl(track) {
+    const raw = track?.info?.artworkUrl || track?.info?.thumbnail || FALLBACK_ART;
+    if (typeof raw !== "string") return FALLBACK_ART;
+    const url = raw.trim();
+    if (!/^https?:\/\//i.test(url)) return FALLBACK_ART;
+    return url;
+}
+
 /**
  * Create the "Now Playing" container using Components V2
  * Design matches the example screenshot with -# subtext
@@ -43,9 +53,7 @@ function createNowPlayingContainer(track, player, guildData, musicardBuffer) {
             )
         )
         .setThumbnailAccessory(
-            new ThumbnailBuilder().setURL(
-                track.info.artworkUrl || track.info.thumbnail || "https://i.imgur.com/4YFmJMi.png"
-            )
+            new ThumbnailBuilder().setURL(safeArtworkUrl(track))
         );
 
     container.addSectionComponents(section);
@@ -244,9 +252,7 @@ function createChatPlayNowPlayingContainer(track, player, guildData, musicardBuf
             )
         )
         .setThumbnailAccessory(
-            new ThumbnailBuilder().setURL(
-                track.info.artworkUrl || track.info.thumbnail || "https://i.imgur.com/4YFmJMi.png"
-            )
+            new ThumbnailBuilder().setURL(safeArtworkUrl(track))
         );
 
     container.addSectionComponents(section);
@@ -538,4 +544,5 @@ module.exports = {
     createChatPlayLoadingContainer,
     createQueueContainer,
     formatDuration,
+    safeArtworkUrl,
 };

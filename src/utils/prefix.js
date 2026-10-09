@@ -1,7 +1,7 @@
 const { MessageFlags } = require("discord.js");
-const config = require("../../config");
+const { DEFAULT_PREFIX, getPrefix } = require("./prefixStore");
 
-const PREFIX = config.prefix || "!";
+const PREFIX = DEFAULT_PREFIX;
 
 const OptionType = {
     SUB_COMMAND: 1,
@@ -15,8 +15,9 @@ const OptionType = {
     NUMBER: 10,
 };
 
-function formatCmd(name, subcommand = null) {
-    return subcommand ? `\`${PREFIX}${name} ${subcommand}\`` : `\`${PREFIX}${name}\``;
+function formatCmd(name, subcommand = null, guildId = null) {
+    const prefix = getPrefix(guildId);
+    return subcommand ? `\`${prefix}${name} ${subcommand}\`` : `\`${prefix}${name}\``;
 }
 
 function commandJson(data) {
@@ -50,8 +51,14 @@ function parsePositional(options, args) {
         const type = optionType(opt.type);
 
         if (type === OptionType.STRING) {
-            const moreStrings = options.slice(i + 1).some((o) => optionType(o.type) === OptionType.STRING);
-            if (!moreStrings) {
+            const later = options.slice(i + 1);
+            const moreStrings = later.some((o) => optionType(o.type) === OptionType.STRING);
+            const laterMention = later.some((o) => {
+                const t = optionType(o.type);
+                return t === OptionType.USER || t === OptionType.CHANNEL || t === OptionType.ROLE;
+            });
+            // Don't swallow @user / #channel into the last string option.
+            if (!moreStrings && !laterMention) {
                 const rest = args.slice(i).join(" ").trim();
                 map[opt.name] = rest || null;
                 break;
@@ -128,6 +135,7 @@ function createPrefixInteraction(message, command, args) {
         channel: message.channel,
         member: message.member,
         user: message.author,
+        message,
         commandName: command.data?.name,
         deferred: false,
         replied: false,
@@ -161,7 +169,7 @@ function createPrefixInteraction(message, command, args) {
                 return null;
             },
             getUser() {
-                return null;
+                return message.mentions?.users?.first() || null;
             },
             getMember() {
                 return null;
@@ -214,4 +222,5 @@ module.exports = {
     formatCmd,
     parseCommandArgs,
     createPrefixInteraction,
+    getPrefix,
 };

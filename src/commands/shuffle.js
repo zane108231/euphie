@@ -1,4 +1,6 @@
 const { SlashCommandBuilder, MessageFlags, ContainerBuilder, TextDisplayBuilder } = require("discord.js");
+const { requireMusicAction } = require("../utils/permissions");
+const { getMusicDenial } = require("../utils/permissions");
 
 module.exports = {
     data: new SlashCommandBuilder()
@@ -6,19 +8,12 @@ module.exports = {
         .setDescription("Shuffle the queue"),
 
     async execute(interaction, client) {
-        const player = client.riffy.players.get(interaction.guild.id);
-        if (!player) {
-            return interaction.reply({
-                content: "❌ No active player.",
-                flags: MessageFlags.Ephemeral,
-            });
-        }
+        const player = await requireMusicAction(interaction, client, "shuffle");
+        if (!player) return;
 
-        if (!interaction.member.voice?.channel) {
-            return interaction.reply({
-                content: "❌ You need to be in a voice channel!",
-                flags: MessageFlags.Ephemeral,
-            });
+        const denial = getMusicDenial(interaction.member, player, "shuffle");
+        if (denial) {
+            return interaction.reply({ content: denial, flags: MessageFlags.Ephemeral });
         }
 
         if (player.queue.length === 0) {

@@ -1,4 +1,9 @@
+const { MessageFlags, ContainerBuilder, TextDisplayBuilder, EmbedBuilder } = require("discord.js");
 const config = require("../../config");
+const { claimDjIfNeeded } = require("./permissions");
+
+const NODE_FAIL_COOLDOWN_MS = 10 * 60 * 1000;
+const nodeCooldowns = new Map();
 
 function sleep(ms) {
     return new Promise((resolve) => setTimeout(resolve, ms));
@@ -25,7 +30,6 @@ function markPlayerIdle(player) {
     if (!player) return;
     player.playing = false;
     player.paused = false;
-    player.current = null;
 }
 
 function catchRest(promise) {
@@ -41,14 +45,30 @@ function getConnectedNode(riffy) {
 
 let restoringNodes = false;
 
+function markNodeFailed(nodeName) {
+    if (!nodeName) return;
+    nodeCooldowns.set(nodeName, Date.now() + NODE_FAIL_COOLDOWN_MS);
+}
+
+function isNodeOnCooldown(nodeName) {
+    const until = nodeCooldowns.get(nodeName) || 0;
+    if (Date.now() >= until) {
+        nodeCooldowns.delete(nodeName);
+        return false;
+    }
+    return true;
+}
+
 function reviveNodes(riffy) {
     if (!riffy || restoringNodes) return;
     restoringNodes = true;
     setTimeout(() => {
         restoringNodes = false;
-    }, 2000);
+    }, 5000);
 
     for (const cfg of config.nodes) {
+        if (isNodeOnCooldown(cfg.name)) continue;
+
         const existing = riffy.nodeMap.get(cfg.name);
         if (!existing) {
             try {
@@ -60,18 +80,13 @@ function reviveNodes(riffy) {
             continue;
         }
 
-        existing.reconnectAttempted = 1;
-        if (existing.reconnectAttempt) {
-            clearTimeout(existing.reconnectAttempt);
-            existing.reconnectAttempt = null;
-        }
-
-        if (!existing.connected) {
-            try {
-                existing.connect();
-            } catch (err) {
-                console.error(`[euphire] Failed to reconnect node "${cfg.name}":`, err.message);
-            }
+        // Let Riffy's own reconnect handle a live node. Forcing connect()
+        // closes the websocket and freezes whoever is playing on it.
+        if (existing.connected || existing.reconnectAttempt || existing.ws) continue;
+        try {
+            existing.connect();
+        } catch (err) {
+            console.error(`[euphire] Failed to reconnect node "${cfg.name}":`, err.message);
         }
     }
 }
@@ -92,21 +107,73 @@ async function waitForNode(riffy, timeoutMs = 10000) {
     throw new Error("No nodes are available");
 }
 
-async function ensurePlayer(client, { guildId, voiceChannelId, textChannelId, volume = 75 }) {
+function getOccupiedVoiceChannel(guild, client) {
+    const me = guild.members.me;
+    if (me?.voice?.channel) return me.voice.channel;
+
+    const player = client.riffy.players.get(guild.id);
+    if (!player?.voiceChannel) return null;
+
+    const channel = guild.channels.cache.get(player.voiceChannel);
+    if (channel?.members?.has(client.user.id)) return channel;
+    return null;
+}
+
+function buildAlreadyInUsePayload(channel) {
+    const name = channel?.name || "a voice channel";
+    const mention = channel?.id ? `<#${channel.id}>` : name;
+    const container = new ContainerBuilder();
+    container.addTextDisplayComponents(
+        new TextDisplayBuilder().setContent(
+            `### 🎧 I am already in this ${name}\n\n` +
+            "**Channel**\n" +
+            `-# ${mention}\n\n` +
+            "**Why**\n" +
+            "-# First come, first served. Join that voice channel, or wait until I leave."
+        )
+    );
+    return {
+        containerPayload: {
+            components: [container],
+            flags: MessageFlags.IsComponentsV2,
+        },
+        embedPayload: {
+            embeds: [
+                new EmbedBuilder()
+                    .setColor(config.accentColor || 0x2b2d31)
+                    .setTitle(`🎧 I am already in this ${name}`)
+                    .setDescription(`I'm already connected to ${mention}. Join that channel, or wait until I'm not in a voice channel.`)
+            ],
+        },
+    };
+}
+
+async function replyAlreadyInUse(interaction, channel) {
+    const { containerPayload, embedPayload } = buildAlreadyInUsePayload(channel);
+    try {
+        if (interaction.deferred || interaction.replied) {
+            return await interaction.editReply(containerPayload);
+        }
+        return await interaction.reply(containerPayload);
+    } catch {
+        try {
+            if (interaction.deferred || interaction.replied) {
+                return await interaction.editReply(embedPayload);
+            }
+            return await interaction.reply(embedPayload);
+        } catch {
+            return null;
+        }
+    }
+}
+
+async function ensurePlayer(client, { guildId, voiceChannelId, textChannelId, volume = 75, requesterId = null }) {
     let player = client.riffy.players.get(guildId);
     if (player) {
+        claimDjIfNeeded(guildId, requesterId);
         player.volume = volume;
-        if (voiceChannelId && player.voiceChannel !== voiceChannelId) {
-            try {
-                player.connect({
-                    guildId,
-                    voiceChannel: voiceChannelId,
-                    deaf: true,
-                });
-            } catch {
-                // already connected
-            }
-        }
+        if (textChannelId) player.textChannel = textChannelId;
+        if (voiceChannelId) player.voiceChannel = voiceChannelId;
         return player;
     }
 
@@ -119,7 +186,14 @@ async function ensurePlayer(client, { guildId, voiceChannelId, textChannelId, vo
         deaf: true,
     });
     player.volume = volume;
+    claimDjIfNeeded(guildId, requesterId);
     return player;
+}
+
+function setAnnounceChannel(player, guildData, channelId) {
+    if (!channelId) return;
+    if (player) player.textChannel = channelId;
+    if (guildData) guildData.playerChannelId = channelId;
 }
 
 async function startIfIdle(player) {
@@ -161,7 +235,12 @@ module.exports = {
     startIfIdle,
     markPlayerIdle,
     ensurePlayer,
+    setAnnounceChannel,
     setVolumeSafe,
     reviveNodes,
     waitForNode,
+    markNodeFailed,
+    getOccupiedVoiceChannel,
+    replyAlreadyInUse,
+    buildAlreadyInUsePayload,
 };
