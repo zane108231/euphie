@@ -1,5 +1,6 @@
 require("dotenv").config();
 
+const http = require("http");
 const { Client, GatewayIntentBits, GatewayDispatchEvents, Collection } = require("discord.js");
 const { Riffy } = require("riffy");
 const fs = require("fs");
@@ -8,6 +9,31 @@ const config = require("../config");
 const { loadCommands } = require("./handlers/commandHandler");
 const { setupPlayerHandler } = require("./handlers/playerHandler");
 const { patchRiffyResolve } = require("./utils/search");
+
+// --- Keep-alive HTTP server (for Render) ---
+// Ping https://euphie.onrender.com (e.g. with UptimeRobot / cron-job.org) to keep the service awake.
+const PORT = process.env.PORT || 3000;
+const startedAt = Date.now();
+
+http
+    .createServer((req, res) => {
+        if (req.url === "/health" || req.url === "/") {
+            res.writeHead(200, { "Content-Type": "application/json" });
+            res.end(
+                JSON.stringify({
+                    status: "ok",
+                    uptime: Math.floor((Date.now() - startedAt) / 1000),
+                    botReady: client.isReady(),
+                })
+            );
+            return;
+        }
+        res.writeHead(404, { "Content-Type": "text/plain" });
+        res.end("Not found");
+    })
+    .listen(PORT, "0.0.0.0", () => {
+        console.log(`[euphire] HTTP server listening on port ${PORT}`);
+    });
 
 // --- Create Discord Client ---
 const client = new Client({
