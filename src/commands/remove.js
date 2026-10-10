@@ -2,6 +2,7 @@ const { SlashCommandBuilder, MessageFlags, ContainerBuilder, TextDisplayBuilder 
 const { requireMusicAction } = require("../utils/permissions");
 
 module.exports = {
+    aliases: ["rm", "delete"],
     data: new SlashCommandBuilder()
         .setName("remove")
         .setDescription("Remove a track from the queue")

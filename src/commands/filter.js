@@ -15,6 +15,7 @@ const FILTER_PRESETS = {
 };
 
 module.exports = {
+    aliases: ["filters"],
     data: new SlashCommandBuilder()
         .setName("filter")
         .setDescription("Apply audio filters to the player")

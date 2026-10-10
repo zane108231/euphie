@@ -3,6 +3,7 @@ const { requireMusicAction } = require("../utils/permissions");
 const { getMusicDenial } = require("../utils/permissions");
 
 module.exports = {
+    aliases: ["purge"],
     data: new SlashCommandBuilder()
         .setName("clear")
         .setDescription("Clear the queue without stopping the current track"),

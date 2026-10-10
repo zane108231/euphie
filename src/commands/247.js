@@ -5,6 +5,7 @@ const { claimDjIfNeeded } = require("../utils/permissions");
 const { getOccupiedVoiceChannel, replyAlreadyInUse } = require("../utils/playback");
 
 module.exports = {
+    aliases: ["stay"],
     data: new SlashCommandBuilder()
         .setName("247")
         .setDescription("Toggle 24/7 mode — bot stays in VC even when queue is empty"),

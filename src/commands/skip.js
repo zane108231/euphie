@@ -5,7 +5,7 @@ const { requireMusicAction } = require("../utils/permissions");
 const { getMusicDenial } = require("../utils/permissions");
 
 module.exports = {
-    aliases: ["s"],
+    aliases: ["s", "next"],
     data: new SlashCommandBuilder()
         .setName("skip")
         .setDescription("Skip the current track"),

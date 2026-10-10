@@ -11,6 +11,7 @@ function isValidPrefix(value) {
 }
 
 module.exports = {
+    aliases: ["setprefix"],
     data: new SlashCommandBuilder()
         .setName("prefix")
         .setDescription("View or change this server's command prefix")

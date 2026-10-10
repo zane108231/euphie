@@ -3,6 +3,7 @@ const { requireMusicAction } = require("../utils/permissions");
 const { getMusicDenial } = require("../utils/permissions");
 
 module.exports = {
+    aliases: ["mix"],
     data: new SlashCommandBuilder()
         .setName("shuffle")
         .setDescription("Shuffle the queue"),

@@ -1,10 +1,37 @@
 const { getGuildData, deleteGuildData } = require("../utils/playerStore");
 const { createChatPlayIdleContainer } = require("../utils/components");
 const { MessageFlags } = require("discord.js");
+const { addSessionParticipant, removeSessionParticipant } = require("../utils/statsTracker");
 
 module.exports = {
     name: "voiceStateUpdate",
     async execute(client, oldState, newState) {
+        // Track shared listening: user joins/leaves voice channel while music is playing
+        if (oldState.id !== client.user.id && !oldState.member.user.bot) {
+            const player = client.riffy.players.get(oldState.guild.id);
+            if (player && player.playing && !player.paused) {
+                const guildData = getGuildData(oldState.guild.id);
+                if (guildData.currentSessionId) {
+                    // User joined the voice channel
+                    if (!oldState.channelId && newState.channelId && newState.channelId === player.voiceChannel) {
+                        addSessionParticipant(guildData.currentSessionId, oldState.id);
+                    }
+                    // User left the voice channel
+                    else if (oldState.channelId && !newState.channelId && oldState.channelId === player.voiceChannel) {
+                        removeSessionParticipant(guildData.currentSessionId, oldState.id);
+                    }
+                    // User moved to a different channel
+                    else if (oldState.channelId && newState.channelId && oldState.channelId !== newState.channelId) {
+                        if (oldState.channelId === player.voiceChannel) {
+                            removeSessionParticipant(guildData.currentSessionId, oldState.id);
+                        } else if (newState.channelId === player.voiceChannel) {
+                            addSessionParticipant(guildData.currentSessionId, oldState.id);
+                        }
+                    }
+                }
+            }
+        }
+
         // Check if the bot was disconnected from a voice channel
         if (oldState.id === client.user.id && !newState.channelId) {
             const guildData = getGuildData(oldState.guild.id);

@@ -19,10 +19,16 @@ async function generateMusicCard(track, player, guildData) {
 
         const musicardConfig = config.musicard || {};
 
+        // Validate artwork URL - if it's invalid, use fallback
+        let artworkUrl = track.info.artworkUrl || track.info.thumbnail;
+        if (artworkUrl && !artworkUrl.startsWith("http")) {
+            artworkUrl = null;
+        }
+
         const card = await Bloom({
             trackName: (track.info.title || "Unknown").substring(0, 40),
             artistName: (track.info.author || "Unknown Artist").substring(0, 30),
-            albumArt: track.info.artworkUrl || track.info.thumbnail || "https://i.imgur.com/4YFmJMi.png",
+            albumArt: artworkUrl || "https://i.imgur.com/4YFmJMi.png",
             timeAdjust: {
                 timeStart: formatTime(position),
                 timeEnd: formatTime(duration),

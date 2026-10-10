@@ -2,6 +2,7 @@ const { SlashCommandBuilder, MessageFlags } = require("discord.js");
 const { buildStatusContainer } = require("../utils/statusPage");
 
 module.exports = {
+    aliases: ["stats"],
     data: new SlashCommandBuilder()
         .setName("status")
         .setDescription("Check the current status of euphire's systems"),

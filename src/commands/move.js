@@ -2,6 +2,7 @@ const { SlashCommandBuilder, MessageFlags, ContainerBuilder, TextDisplayBuilder 
 const { requireMusicAction } = require("../utils/permissions");
 
 module.exports = {
+    aliases: ["mv"],
     data: new SlashCommandBuilder()
         .setName("move")
         .setDescription("Move a track to a different position in the queue")

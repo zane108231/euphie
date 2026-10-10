@@ -48,6 +48,7 @@ function parsePermissionArgs(interaction) {
 }
 
 module.exports = {
+    aliases: ["perms"],
     data: new SlashCommandBuilder()
         .setName("permission")
         .setDescription("Allow others to use DJ music controls")

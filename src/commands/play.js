@@ -3,6 +3,7 @@ const { getGuildData } = require("../utils/playerStore");
 const { isDuplicateTrack, startIfIdle, ensurePlayer, setAnnounceChannel, getOccupiedVoiceChannel, replyAlreadyInUse } = require("../utils/playback");
 
 module.exports = {
+    aliases: ["p"],
     data: new SlashCommandBuilder()
         .setName("play")
         .setDescription("Play a song or add it to the queue")
@@ -74,10 +75,10 @@ module.exports = {
             ) {
                 const duplicates = [];
                 const addedTracks = [];
-                
+
                 for (const track of tracks) {
                     track.info.requester = interaction.user;
-                    
+
                     if (isDuplicateTrack(player, track)) {
                         duplicates.push(track.info.title || "Unknown");
                     } else {
@@ -90,8 +91,9 @@ module.exports = {
                     "**Playlist**\n" +
                     `-# ${playlistInfo?.name || "Unknown Playlist"}\n\n` +
                     "**Tracks**\n" +
-                    `-# ${addedTracks.length} of ${tracks.length} songs added to queue`;
-                    
+                    `-# ${addedTracks.length} of ${tracks.length} songs added to queue\n\n` +
+                    "**Position**\n-# #" + String(player.queue.length) + " in queue";
+
                 if (duplicates.length > 0) {
                     content += `\n\n⚠️ **Duplicates Skipped**\n-# ${duplicates.length} songs already in queue`;
                 }
@@ -116,7 +118,7 @@ module.exports = {
                 if (!track) {
                     return interaction.editReply({ content: "❌ No results found." });
                 }
-                
+
                 if (isDuplicateTrack(player, track)) {
                     const container = new ContainerBuilder();
                     container.addTextDisplayComponents(
@@ -133,32 +135,33 @@ module.exports = {
                         flags: MessageFlags.IsComponentsV2,
                     });
                 }
-                
+
                 track.info.requester = interaction.user;
                 const shouldStart = !player.playing && !player.paused;
                 player.queue.add(track);
 
-                const container = new ContainerBuilder();
-                container.addTextDisplayComponents(
-                    new TextDisplayBuilder().setContent(
-                        (shouldStart
-                            ? "### ✅ Now Playing\n\n"
-                            : "### ✅ Track Added\n\n") +
-                        "**Title**\n" +
-                        `-# ${track.info.title}\n\n` +
-                        "**Artist**\n" +
-                        `-# ${track.info.author}` +
-                        (shouldStart
-                            ? ""
-                            : `\n\n**Position**\n-# #${player.queue.length} in queue`)
-                    )
-                );
-                await interaction.editReply({
-                    components: [container],
-                    flags: MessageFlags.IsComponentsV2,
-                });
-
                 await startIfIdle(player);
+
+                // Only send a message if adding to existing queue, not when starting playback
+                if (!shouldStart) {
+                    const container = new ContainerBuilder();
+                    container.addTextDisplayComponents(
+                        new TextDisplayBuilder().setContent(
+                            "### ✅ Added to queue\n\n" +
+                            "**Title**\n" +
+                            `-# ${track.info.title}\n\n` +
+                            "**Artist**\n" +
+                            `-# ${track.info.author}\n\n` +
+                            "**Position**\n-# #" + String(player.queue.length) + " in queue"
+                        )
+                    );
+                    await interaction.editReply({
+                        components: [container],
+                        flags: MessageFlags.IsComponentsV2,
+                    });
+                } else {
+                    await interaction.editReply({ content: "✅ Playing...", flags: MessageFlags.Ephemeral });
+                }
             } else {
                 console.log(`[euphire] Unhandled loadType: "${loadType}"`);
                 return interaction.editReply({ content: `❌ No results found. (loadType: ${loadType})` });

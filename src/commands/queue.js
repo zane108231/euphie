@@ -3,7 +3,7 @@ const { getGuildData } = require("../utils/playerStore");
 const { createQueueContainer } = require("../utils/components");
 
 module.exports = {
-    aliases: ["q"],
+    aliases: ["q", "list"],
     data: new SlashCommandBuilder()
         .setName("queue")
         .setDescription("Show the current queue")

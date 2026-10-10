@@ -201,12 +201,9 @@ function addMusicPage(container, getCmd) {
             `**11.** ${getCmd("volume")} — Set the playback volume\n\n` +
             `**12.** ${getCmd("247")} — Toggle 24/7 mode\n\n` +
             `**13.** ${getCmd("filter")} — Apply an audio filter preset\n\n` +
-            `**14.** ${getCmd("chatplay", "enable")} — Resume listening for song requests\n\n` +
-            `**15.** ${getCmd("chatplay", "disable")} — Pause listening (keeps message)\n\n` +
-            `**16.** ${getCmd("chatplay", "setup")} — Send the persistent player message\n\n` +
-            `**17.** ${getCmd("about")} — Learn more about euphire\n\n` +
-            `**18.** ${getCmd("prefix")} — View or change this server's prefix (admins)\n\n` +
-            `**19.** ${getCmd("permission")} — DJ grants skip/stop/volume and more`
+            `**14.** ${getCmd("about")} — Learn more about euphire\n\n` +
+            `**15.** ${getCmd("prefix")} — View or change this server's prefix (admins)\n\n` +
+            `**16.** ${getCmd("permission")} — DJ grants skip/stop/volume and more`
         )
     );
 }
@@ -242,21 +239,7 @@ function addFiltersPage(container, getCmd) {
 
     container.addTextDisplayComponents(
         new TextDisplayBuilder().setContent(
-            `### 💬 ChatPlay\n\n` +
-            `**Setup**\n` +
-            `-# ${getCmd("chatplay", "setup")} — Send the persistent player message\n\n` +
-            `**Enable / Disable**\n` +
-            `-# ${getCmd("chatplay", "enable")} — Resume listening for song requests\n` +
-            `-# ${getCmd("chatplay", "disable")} — Pause listening (keeps message)\n\n` +
-            `-# Once set up, just **type a song name** in the channel and euphire plays it automatically!`
-        )
-    );
-
-    container.addSeparatorComponents(new SeparatorBuilder().setDivider(true));
-
-    container.addTextDisplayComponents(
-        new TextDisplayBuilder().setContent(
-            `### 🔁 24/7 Mode\n\n` +
+            `###  24/7 Mode\n\n` +
             `**Toggle**\n` +
             `-# ${getCmd("247")} — Turn 24/7 mode on or off\n\n` +
             `**How it works**\n` +
@@ -428,6 +411,7 @@ function addSupportPage(container, getCmd) {
 }
 
 module.exports = {
+    aliases: ["h"],
     data: new SlashCommandBuilder()
         .setName("help")
         .setDescription("Show all euphire commands and features"),

@@ -1,28 +1,26 @@
-const { SlashCommandBuilder, MessageFlags, AttachmentBuilder, ContainerBuilder, TextDisplayBuilder, SeparatorBuilder } = require("discord.js");
+const { SlashCommandBuilder, MessageFlags, AttachmentBuilder, ContainerBuilder, TextDisplayBuilder, SeparatorBuilder, EmbedBuilder } = require("discord.js");
 const { getGuildData } = require("../utils/playerStore");
 const { createNowPlayingContainer, formatDuration } = require("../utils/components");
 const { generateMusicCard } = require("../utils/musicard");
+const { isActivelyPlaying } = require("../utils/playback");
+const config = require("../../config");
 
 module.exports = {
-    aliases: ["np"],
+    aliases: ["np", "now"],
     data: new SlashCommandBuilder()
         .setName("nowplaying")
         .setDescription("Show the currently playing track"),
 
     async execute(interaction, client) {
         const player = client.riffy.players.get(interaction.guild.id);
-        if (!player || !player.current) {
-            const container = new ContainerBuilder();
-            container.addTextDisplayComponents(
-                new TextDisplayBuilder().setContent(
-                    "### 🎶 Now Playing\n\n" +
-                    "**Status**\n" +
-                    "-# Nothing is playing right now."
-                )
-            );
+        if (!player || !isActivelyPlaying(player)) {
+            const embed = new EmbedBuilder()
+                .setColor(config.accentColor || 0x2b2d31)
+                .setTitle("🎶 Now Playing")
+                .setDescription("Nothing is playing right now.");
             return interaction.reply({
-                components: [container],
-                flags: MessageFlags.Ephemeral | MessageFlags.IsComponentsV2,
+                embeds: [embed],
+                flags: MessageFlags.Ephemeral,
             });
         }
 

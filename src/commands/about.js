@@ -12,6 +12,7 @@ const {
 } = require("discord.js");
 
 module.exports = {
+    aliases: ["info"],
     data: new SlashCommandBuilder()
         .setName("about")
         .setDescription("Learn more about euphire"),

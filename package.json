@@ -8,6 +8,8 @@
     "deploy": "node src/deploy-commands.js"
   },
   "dependencies": {
+    "@napi-rs/canvas": "^1.0.10",
+    "better-sqlite3": "^13.0.3",
     "discord.js": "14.25.1",
     "dotenv": "^16.4.7",
     "musicard": "latest",

@@ -3,6 +3,7 @@ const { formatDuration } = require("../utils/components");
 const { requireMusicAction } = require("../utils/permissions");
 
 module.exports = {
+    aliases: ["rewind"],
     data: new SlashCommandBuilder()
         .setName("seek")
         .setDescription("Seek to a specific position in the track")

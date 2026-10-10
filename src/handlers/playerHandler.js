@@ -1,15 +1,16 @@
 const { MessageFlags, AttachmentBuilder, ContainerBuilder, TextDisplayBuilder, EmbedBuilder } = require("discord.js");
 const { getGuildData, clearUpdateInterval } = require("../utils/playerStore");
-const { createNowPlayingContainer, createChatPlayIdleContainer, createChatPlayNowPlayingContainer, safeArtworkUrl } = require("../utils/components");
+const { createNowPlayingContainer, safeArtworkUrl } = require("../utils/components");
 const { generateMusicCard } = require("../utils/musicard");
 const { recordIncident } = require("../utils/incidents");
 const { scheduleStatusUpdate } = require("../services/statusMonitor");
 const { markPlayerIdle, reviveNodes, markNodeFailed } = require("../utils/playback");
 const { resetSessionPermissions } = require("../utils/permissions");
-const { getPrefix } = require("../utils/prefixStore");
+const { initStatsDB, getStatsDB } = require("../utils/statsDB");
+const { startSession, updateSessionProgress, endSession, addSessionParticipant, removeSessionParticipant } = require("../utils/statsTracker");
 const config = require("../../config");
 
-const UPDATE_INTERVAL_MS = 15 * 1000; // 15 seconds
+const UPDATE_INTERVAL_MS = 30 * 1000; // Increased to 30 seconds to reduce CPU load
 const LAVALINK_RECONNECT_INTERVAL_MS = 30 * 60 * 1000;
 const NODE_RESTORE_DELAY_MS = 10 * 60 * 1000;
 let lavalinkReconnectTimer = null;
@@ -57,41 +58,12 @@ function isMissingPermissions(err) {
 
 async function sendQueueEmptyNotice(channel, guildId) {
     if (!channel) return;
-    const prefix = getPrefix(guildId);
-    const container = new ContainerBuilder();
-    container.addTextDisplayComponents(
-        new TextDisplayBuilder().setContent(
-            "### 📭 There are no more tracks\n\n" +
-            "**Queue**\n" +
-            "-# The last song finished and nothing else is queued.\n\n" +
-            "**Status**\n" +
-            "-# Nothing is playing right now.\n\n" +
-            "**Play again**\n" +
-            `-# \`${prefix}play <song name>\``
-        )
-    );
+    const embed = new EmbedBuilder()
+        .setColor(config.accentColor || 0x2b2d31)
+        .setTitle("There are no more tracks");
 
     try {
-        await channel.send({
-            components: [container],
-            flags: MessageFlags.IsComponentsV2,
-        });
-        return;
-    } catch {
-        // Components V2 may be blocked — fall back to a classic embed
-    }
-
-    try {
-        const { EmbedBuilder } = require("discord.js");
-        await channel.send({
-            embeds: [
-                new EmbedBuilder()
-                    .setColor(config.accentColor || 0x2b2d31)
-                    .setTitle("📭 There are no more tracks")
-                    .setDescription("The queue has ended. Nothing is playing right now.")
-                    .setFooter({ text: `Use ${prefix}play to start another song` }),
-            ],
-        });
+        await channel.send({ embeds: [embed] });
     } catch {
         // Channel has no send permission
     }
@@ -288,16 +260,42 @@ async function refreshPlayerMessage(client, guildId) {
         if (guildData.cannotSendPlayer) return;
         const track = player.current;
 
-        const musicardBuffer = await generateMusicCard(track, player, guildData);
-        const container = createNowPlayingContainer(track, player, guildData, musicardBuffer);
-
-        const files = [];
-        if (musicardBuffer) {
-            files.push(new AttachmentBuilder(musicardBuffer, { name: "musicard.png" }));
+        // Update statistics session progress (commit progress to database)
+        // Only update on every other auto-update to reduce database I/O
+        try {
+            if (guildData.currentSessionId && !player.paused) {
+                const position = player.position || 0;
+                const shouldUpdate = !guildData.lastStatsUpdate || (Date.now() - guildData.lastStatsUpdate > 30000);
+                if (shouldUpdate) {
+                    updateSessionProgress(guildData.currentSessionId, position, false);
+                    guildData.lastStatsUpdate = Date.now();
+                }
+            }
+        } catch (err) {
+            console.error("[euphire] Failed to update session progress:", err.message);
         }
 
-        const channelId = guildData.playerChannelId || player.textChannel;
-        await editOrSendPlayerMessage(client, guildData, channelId, container, files);
+        // Only regenerate musicard if progress changed significantly (every 10%)
+        const duration = track.info.length || 0;
+        const position = player.position || 0;
+        const progress = duration > 0 ? Math.floor((position / duration) * 100) : 0;
+        const lastProgress = guildData.lastProgress || 0;
+        
+        // Only regenerate if progress changed by at least 10% or this is the first update
+        if (Math.abs(progress - lastProgress) >= 10 || !guildData.lastProgress) {
+            const musicardBuffer = await generateMusicCard(track, player, guildData);
+            const container = createNowPlayingContainer(track, player, guildData, musicardBuffer);
+
+            const files = [];
+            if (musicardBuffer) {
+                files.push(new AttachmentBuilder(musicardBuffer, { name: "musicard.png" }));
+            }
+
+            const channelId = guildData.playerChannelId || player.textChannel;
+            await editOrSendPlayerMessage(client, guildData, channelId, container, files);
+            
+            guildData.lastProgress = progress;
+        }
     } catch (error) {
         console.error("[euphire] Auto-update error:", error);
     }
@@ -324,6 +322,15 @@ function setupPlayerHandler(client) {
     if (!client.riffy) {
         console.warn('[euphire] Riffy client not initialized; player handlers not attached.');
         return;
+    }
+
+    // Initialize statistics database
+    try {
+        initStatsDB();
+        const { cleanupOrphanedSessions } = require("../utils/statsTracker");
+        cleanupOrphanedSessions();
+    } catch (err) {
+        console.error("[euphire] Failed to initialize statistics database:", err.message);
     }
     // --- Node Connected ---
     client.riffy.on("nodeConnect", (node) => {
@@ -383,6 +390,30 @@ function setupPlayerHandler(client) {
                 guildData.idleTimeout = null;
             }
 
+            // Clear queue end time since a new track started
+            guildData.queueEndTime = null;
+
+            // Start statistics tracking session
+            try {
+                const requester = track.info.requester;
+                if (requester && requester.id) {
+                    const sessionId = startSession(player.guildId, requester.id, track);
+                    guildData.currentSessionId = sessionId;
+
+                    // Add current voice channel members as participants
+                    const voiceChannel = client.channels.cache.get(player.voiceChannel);
+                    if (voiceChannel) {
+                        voiceChannel.members.forEach((member) => {
+                            if (!member.user.bot && member.id !== requester.id) {
+                                addSessionParticipant(sessionId, member.id);
+                            }
+                        });
+                    }
+                }
+            } catch (err) {
+                console.error("[euphire] Failed to start stats session:", err.message);
+            }
+
             // Start voice channel monitoring
             startVoiceChannelMonitoring(client, player.guildId);
 
@@ -390,22 +421,6 @@ function setupPlayerHandler(client) {
 
             // Start 15-second auto-update interval
             startUpdateInterval(client, player.guildId);
-
-            // Fetch suggestions for the dropdown
-            try {
-                const searchQuery = `${track.info.author} ${track.info.title}`;
-                const result = await client.riffy.resolve({
-                    query: searchQuery,
-                    requester: track.info.requester,
-                });
-                if (result.tracks && result.tracks.length > 1) {
-                    guildData.suggestions = result.tracks
-                        .filter((t) => t.info.uri !== track.info.uri)
-                        .slice(0, 10);
-                }
-            } catch (err) {
-                console.error("[euphire] Failed to fetch suggestions:", err.message);
-            }
         } catch (error) {
             console.error("[euphire] trackStart error:", error);
         }
@@ -416,8 +431,22 @@ function setupPlayerHandler(client) {
         try {
             const guildData = getGuildData(player.guildId);
 
+            // End statistics tracking session
+            try {
+                if (guildData.currentSessionId) {
+                    updateSessionProgress(guildData.currentSessionId, player.position || 0);
+                    endSession(guildData.currentSessionId);
+                    guildData.currentSessionId = null;
+                }
+            } catch (err) {
+                console.error("[euphire] Failed to end stats session:", err.message);
+            }
+
             // Stop the auto-update interval
             clearUpdateInterval(guildData);
+            
+            // Stop voice channel monitoring
+            stopVoiceChannelMonitoring(player.guildId);
 
             if (guildData.autoplay) {
                 player.autoplay(player);
@@ -471,19 +500,31 @@ function setupPlayerHandler(client) {
             if (!stayInVC) {
                 // Clear existing timeout if any
                 if (guildData.idleTimeout) clearTimeout(guildData.idleTimeout);
-                
+
+                // Record the time when queue ended for the 3-minute idle message
+                guildData.queueEndTime = Date.now();
+
                 guildData.idleTimeout = setTimeout(() => {
                     try {
                         const currentPlayer = client.riffy.players.get(player.guildId);
                         // Check if player exists and is not actively playing
                         if (currentPlayer && !currentPlayer.playing && !currentPlayer.paused) {
+                            // Send idle message before disconnecting
+                            const channel = client.channels.cache.get(player.textChannel);
+                            if (channel) {
+                                const embed = new EmbedBuilder()
+                                    .setColor(config.accentColor || 0x2b2d31)
+                                    .setTitle("No tracks have been playing for the past 3 minutes, leaving")
+                                    .setDescription("This can be disabled by using the [e!247](https://www.patreon.com/Jockie) command");
+                                channel.send({ embeds: [embed] }).catch(() => {});
+                            }
                             currentPlayer.destroy();
                         }
                     } catch (err) {
                         // player already destroyed
                     }
                     guildData.idleTimeout = null;
-                }, 30000); // 30s idle timeout
+                }, 180000); // 3 minutes idle timeout
             }
 
             // Clear suggestions
@@ -498,29 +539,22 @@ function setupPlayerHandler(client) {
         const guildData = getGuildData(player.guildId);
         if (guildData.recreatingPlayer) return;
 
+        // End statistics tracking session
+        try {
+            if (guildData.currentSessionId) {
+                updateSessionProgress(guildData.currentSessionId, player.position || 0);
+                endSession(guildData.currentSessionId);
+                guildData.currentSessionId = null;
+            }
+        } catch (err) {
+            console.error("[euphire] Failed to end stats session on disconnect:", err.message);
+        }
+
         clearUpdateInterval(guildData);
         stopVoiceChannelMonitoring(player.guildId);
         
-        // Reset ChatPlay to idle if active (safety net for force disconnects)
-        if (guildData.chatPlayChannelId && guildData.chatPlayMessageId) {
-            try {
-                const { createChatPlayIdleContainer } = require("../utils/components");
-                const { MessageFlags } = require("discord.js");
-                const channel = client.channels.cache.get(guildData.chatPlayChannelId);
-                if (channel) {
-                    const msg = await channel.messages.fetch(guildData.chatPlayMessageId);
-                    await msg.edit({
-                        components: [createChatPlayIdleContainer()],
-                        attachments: [],
-                        flags: MessageFlags.IsComponentsV2,
-                    });
-                }
-            } catch (err) {
-                // message may have been deleted
-            }
-        }
-        // Delete regular player message if it exists (normal /play sessions)
-        else if (guildData.playerMessageId && guildData.playerChannelId) {
+        // Delete regular player message if it exists
+        if (guildData.playerMessageId && guildData.playerChannelId) {
             try {
                 const channel = client.channels.cache.get(guildData.playerChannelId);
                 if (channel) {
@@ -536,8 +570,11 @@ function setupPlayerHandler(client) {
         guildData.playerChannelId = null;
         guildData.suggestions = [];
         guildData.previousTracks = [];
+        guildData.queuePages.clear();
         if (guildData.idleTimeout) clearTimeout(guildData.idleTimeout);
         guildData.idleTimeout = null;
+        guildData.lastProgress = null;
+        guildData.lastStatsUpdate = null;
         resetSessionPermissions(player.guildId);
     });
 
@@ -576,10 +613,10 @@ function startVoiceChannelMonitoring(client, guildId) {
         clearTimeout(guildData.voiceStateTimeout);
     }
     
-    // Check voice channel state every 5 seconds
+    // Check voice channel state every 10 seconds (reduced from 5 to save CPU)
     guildData.voiceStateTimeout = setInterval(() => {
         checkVoiceChannelState(client, guildId);
-    }, 5000);
+    }, 10000);
 }
 
 /**

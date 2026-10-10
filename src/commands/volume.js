@@ -4,7 +4,7 @@ const { setVolumeSafe } = require("../utils/playback");
 const { requireMusicAction } = require("../utils/permissions");
 
 module.exports = {
-    aliases: ["vol"],
+    aliases: ["vol", "v"],
     data: new SlashCommandBuilder()
         .setName("volume")
         .setDescription("Set the playback volume")

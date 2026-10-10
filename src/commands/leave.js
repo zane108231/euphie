@@ -4,10 +4,10 @@ const { requireMusicAction } = require("../utils/permissions");
 const { getMusicDenial } = require("../utils/permissions");
 
 module.exports = {
-    aliases: ["leave"],
+    aliases: ["dc"],
     data: new SlashCommandBuilder()
-        .setName("stop")
-        .setDescription("Stop playback, clear queue, and disconnect"),
+        .setName("leave")
+        .setDescription("Force the bot to leave the voice channel (ignores 24/7 mode)"),
 
     async execute(interaction, client) {
         const player = await requireMusicAction(interaction, client, "stop");
@@ -27,38 +27,21 @@ module.exports = {
         }
         guildData.suggestions = [];
         guildData.previousTracks = [];
+        guildData.playerMessageId = null;
+        guildData.playerChannelId = null;
+        guildData.chatPlayChannelId = null;
+        guildData.chatPlayMessageId = null;
 
         player.queue.clear();
         player.stop();
-
-        if (guildData.twentyFourSeven) {
-            guildData.playerMessageId = null;
-            guildData.playerChannelId = null;
-
-            const container = new ContainerBuilder();
-            container.addTextDisplayComponents(
-                new TextDisplayBuilder().setContent(
-                    "### ⏹ Stopped\n\n" +
-                    "**Status**\n" +
-                    "-# Queue cleared. Staying in voice channel (24/7 mode)."
-                )
-            );
-            return interaction.reply({
-                components: [container],
-                flags: MessageFlags.Ephemeral | MessageFlags.IsComponentsV2,
-            });
-        }
-
-        guildData.playerMessageId = null;
-        guildData.playerChannelId = null;
         player.destroy();
 
         const container = new ContainerBuilder();
         container.addTextDisplayComponents(
             new TextDisplayBuilder().setContent(
-                "### ⏹ Stopped\n\n" +
+                "### 👋 Left Voice Channel\n\n" +
                 "**Status**\n" +
-                "-# Queue cleared and disconnected from voice channel."
+                "-# Disconnected from voice channel and cleared queue."
             )
         );
         await interaction.reply({

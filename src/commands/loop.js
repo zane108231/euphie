@@ -4,6 +4,7 @@ const { requireMusicAction } = require("../utils/permissions");
 const { getMusicDenial } = require("../utils/permissions");
 
 module.exports = {
+    aliases: ["repeat"],
     data: new SlashCommandBuilder()
         .setName("loop")
         .setDescription("Set loop mode")
